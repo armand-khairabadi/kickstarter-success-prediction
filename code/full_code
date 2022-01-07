@@ -1,0 +1,307 @@
+# RANDOM FOREST CLASSIFIER
+
+# Load libraries
+import pandas
+import numpy
+
+# Import data
+df = pandas.read_excel (r'C:\Users\fairw\Desktop\Data Mining for Business Analytics\datasets\Kickstarter-Grading-Sample.xlsx')
+
+# Data Insights
+describe=df.describe()
+df.isnull().sum() # check for missing data
+print(sum(df.duplicated())) # check for Duplicates
+df.dtypes # data types
+
+# Pre-Processing
+
+# Return only Successful and Failed projects
+df["state"].value_counts() 
+df = df.loc[df['state'].isin(
+            ['successful', 'failed'])]
+
+# Drop Irrelevant Features for Classification 
+df=df.drop(["project_id","name","pledged", "staff_pick","backers_count","usd_pledged","spotlight","deadline", "state_changed_at","created_at","launched_at","state_changed_at_weekday","state_changed_at_month","state_changed_at_day","state_changed_at_yr","state_changed_at_hr","launch_to_state_change_days"],axis=1)
+# remove uninformative features and features containing information that is only available after a campaign has launched (e.g., number of backers, if the project was a staff pick, and amount pledged).
+# project_id & name for unique identification purposes only
+# drop date/time variables which have already been broken down into their subparts 
+# drop variables that can only be observed after launch
+
+# Remove Unary Variable
+df["disable_communication"].value_counts() 
+df=df.drop(["disable_communication"],axis=1)
+# disable communication is a unary variable
+
+# Dimensionality Reduction
+
+# Correlation 
+correlation=df.corr()
+
+# Drop Features 
+df=df.drop(["blurb_len","name_len","currency","launched_at_weekday", "created_at_weekday","deadline_weekday",
+            "launched_at_yr","created_at_yr","launched_at_hr","deadline_hr", "created_at_hr"],axis=1)
+
+"""
+two features are highly correlated, then the information they contain is very similar,
+and it is likely redundant to include both features. The solution to highly correlated
+features is simple: remove one of them from the feature set.
+"""
+# since name_len, created_at_yr, launched_at_yr are highly correalted therefore I am removing these variables to avoid multicollinearity issues
+# removing blurb_len and keeping only blurb_len_clean for the prediction purpose (keep the clean version as it is more likely to contain key words)
+# the hour the project is created at is also unlikely to influence the money raised (uninformative)
+
+# Imputing Missing Class Values (missing categorical values replaced with "Missing")
+df["category"].fillna("Missing", inplace = True)
+
+# Feature Engineering
+
+# Goal Amount in USD 
+df["goal"] = df["goal"] * df["static_usd_rate"]
+
+# Goal Amount/Duration of Project Launch Period
+df['goal_to_launch_time'] = df['goal']/df['launch_to_deadline_days']
+
+df=df.drop(["static_usd_rate"],axis=1) # drop static rate 
+
+# Group Categories (obtain more balanced counts)
+df['category'].replace(['Comedy','Academic','Thrillers','Shorts','Places', 'Spaces','Makerspaces','Immersive','Experimental','Flight', 'Wearables'], 'Other',inplace = True)
+df['category'].replace(['Webseries'],'Web', inplace = True) 
+df['category'].replace(['Apps'],'Software', inplace = True) 
+df['category'].replace(['Robots'],'Gadgets', inplace = True) 
+df['category'].replace(['Plays','Musical','Sound','Festivals','Blues'],'Arts', inplace = True) 
+
+# Create Dummy Variables (one-hot encoding)
+df=pandas.get_dummies(df, columns=["state"])
+df = df.rename(columns={'state_successful': 'state'})
+df=df.drop(["state_failed"],axis=1)
+
+df=pandas.get_dummies(df, columns=['category','country'])
+
+# Remove Outliers
+
+# Create Isolation Forest Model 
+from sklearn.ensemble import IsolationForest
+iforest = IsolationForest(n_estimators = 100,random_state=10, contamination=0.05) 
+#0.05 threshold to consider a point an anomaly 
+
+# Predict Anomalies
+pred = iforest.fit_predict(df)
+
+# Anomaly Score of Each 
+iforest_scores = iforest.decision_function(df)
+
+# Extracting Anomalies
+from numpy import where
+anomaly_index = where(pred ==-1)
+anomaly_values = df.iloc[anomaly_index]
+
+df.drop(index = anomaly_values.index, inplace = True)
+# cluster formation is sensitive to outliers
+
+# Dropping Observations that Have One or more Missing Value
+df=df.dropna()
+
+# Construct variables
+
+# Rearange columns 
+col_name="state"
+first_col = df.pop(col_name)
+df.insert(0, col_name, first_col) #reinsert it
+
+X = df.iloc[:,1:43]
+y = df['state']
+
+# Run Random Forest (Base Model)
+from sklearn.ensemble import RandomForestClassifier
+rf=RandomForestClassifier(random_state=0)
+
+# Separate the Data
+from sklearn.model_selection import train_test_split
+X_train,X_test,y_train,y_test=train_test_split(X,y,test_size=0.30,random_state=0)
+
+# Train Base Model
+model=rf.fit(X_train,y_train)
+
+# Using the Model to Predict the Results Based on the Test Dataset
+y_test_pred=model.predict(X_test)
+
+# Calculate Accuracy Score
+from sklearn.metrics import accuracy_score
+accuracy_score(y_test,y_test_pred)
+
+# Find Optimal Model Parameters
+from sklearn.ensemble import RandomForestClassifier 
+from sklearn.model_selection import cross_val_score
+
+for i in range (2,22):
+    model=RandomForestClassifier(random_state=0,max_features=i,n_estimators=100) 
+    scores=cross_val_score(estimator=model,X=X,y=y,cv=5)
+    print(i,":",numpy.average(scores)) #7
+    
+for i in range (2,11):
+    model=RandomForestClassifier(random_state=0,max_depth=i,n_estimators=100) 
+    scores=cross_val_score(estimator=model,X=X,y=y,cv=5)
+    print(i,":",numpy.average(scores)) #10
+
+for i in range (2,11):
+    model=RandomForestClassifier(random_state=0,min_samples_split=i,n_estimators=100) 
+    scores=cross_val_score(estimator=model,X=X,y=y,cv=5)
+    print(i,":",numpy.average(scores)) #7
+    
+for i in range (1,11):
+    model=RandomForestClassifier(random_state=0,min_samples_leaf=i,n_estimators=100) 
+    scores=cross_val_score(estimator=model,X=X,y=y,cv=5)
+    print(i,":",numpy.average(scores)) #7
+    
+for i in range (0,2):
+    model=RandomForestClassifier(random_state=0,bootstrap=i,n_estimators=100)
+    scores=cross_val_score(estimator=model,X=X,y=y,cv=5)
+    print(i,":",numpy.average(scores)) #0
+
+# Develop Model with Findings 
+from sklearn.ensemble import RandomForestClassifier
+randomforest=RandomForestClassifier(random_state=0,max_features=7,max_depth=10,min_samples_split=7,min_samples_leaf=7,bootstrap=0,n_estimators=100)
+
+# Train Optimal Model
+model=randomforest.fit(X,y)
+
+from sklearn.model_selection import cross_val_score
+scores=cross_val_score(estimator=model,X=X,y=y,cv=5)
+scores.mean()
+
+y_test_pred=model.predict(X_test)
+
+# Calculate the Accuracy Score
+from sklearn.metrics import accuracy_score
+accuracy_score(y_test,y_test_pred)
+
+# Calculate the Precision/Recall
+from sklearn import metrics
+metrics.precision_score(y_test,y_test_pred)
+metrics.recall_score(y_test,y_test_pred)
+
+# Calculate Feature Importances
+model.feature_importances_
+pandas.DataFrame(list(zip(X.columns,model.feature_importances_)), columns = ['predictor','feature importance'])
+
+# Create Confusion Matrix
+from sklearn.metrics import confusion_matrix
+matrix=confusion_matrix(y_test,y_test_pred)
+
+# Control the order of the label
+confusion_matrix(y_test, y_test_pred, labels=[0,1])
+
+# Print the label
+print(pandas.DataFrame(confusion_matrix(y_test, y_test_pred, labels=[0,1]), index=['true:0', 'true:1'], columns=['pred:0', 'pred:1']))
+
+
+
+
+
+# K-MEANS CLUSTERING ALGORITHM  
+
+# Construct Variables 
+X = df[['goal','name_len_clean','create_to_launch_days']]
+
+# Standardize Features
+from sklearn.preprocessing import StandardScaler
+scaler=StandardScaler()
+X_std=scaler.fit_transform(X)
+
+# Find Optimal Number of Clusters
+from sklearn.cluster import KMeans
+withinss=[]
+
+for i in range (2,8):
+    kmeans=KMeans(n_clusters=i, random_state=0)
+    model=kmeans.fit(X_std)
+    withinss.append(model.inertia_)
+# model is Stochastic, so we need to specify random state, to make sure that the only difference is k
+
+# Plot the Inertia Curve
+from matplotlib import pyplot
+pyplot.plot([2,3,4,5,6,7],withinss)
+
+# Optimal K based on silhouette_score
+from sklearn.metrics import silhouette_score
+for i in range (2,8):    
+    kmeans = KMeans(n_clusters=i, random_state=0)
+    model = kmeans.fit(X)
+    labels = model.labels_
+    print(i,':',numpy.average(silhouette_score(X,labels)))
+    
+# Optimal K based on calinski_harabasz_score
+from sklearn.metrics import calinski_harabasz_score
+for i in range (2,8):    
+    kmeans = KMeans(n_clusters=i, random_state=0)
+    model = kmeans.fit(X)
+    labels = model.labels_
+    print(i,':',numpy.average(calinski_harabasz_score(X,labels)))
+
+# Create Optimal K-Mean Object
+from sklearn.cluster import KMeans
+kmeans=KMeans(n_clusters=4, random_state=0)
+
+# Train Optimal Model
+model=kmeans.fit(X_std)
+
+# Predicted Classes of Each Observation
+labels=kmeans.labels_
+
+# View Cluster Centers
+kmeans.cluster_centers_
+
+# Number of Kickstarter Projects in Each Cluster
+unique, counts = numpy.unique(labels, return_counts=True)
+dict(zip(unique, counts))
+
+# Cluster Visualization
+X.loc[:,'cluster_labels'] = labels
+X.loc[:,'state'] = df.loc[:,'state']
+
+X = X.copy(deep=True)
+X.reset_index(inplace = True)
+
+cols=['goal','name_len_clean','create_to_launch_days']
+new_cols = ['goal1','name_len_clean1','create_to_launch_days1']
+
+for i in new_cols:
+    X[i] = 0
+
+for k in range(len(cols)):
+    percentile = numpy.percentile(X[cols[k]], [25,50,75])
+    for i in range(len(X)):
+        if X[cols[k]][i] <= percentile[0]:
+            X[new_cols[k]][i] = '0-25'
+        elif X[cols[k]][i] <= percentile[1]:
+            X[new_cols[k]][i] = '26-50'
+        elif X[cols[k]][i] <= percentile[2]:
+            X[new_cols[k]][i] = '51-75'
+        else:
+            X[new_cols[k]][i] = '76-100'
+
+# Cluster Distribution (State)
+import plotly.express as px
+fig = px.histogram(X, x = 'cluster_labels', color= 'state',
+                   labels=dict(state = 'Percentile'), 
+                   category_orders={'state': ['0-25', '26-50', '51-75', '75-100']},color_discrete_sequence=["cornflowerblue","yellow"]).update_xaxes(categoryorder='category ascending')
+
+fig.update_layout(title_text='Project State', title_x=0.5)
+fig.show()
+
+# Evaluate Model
+from sklearn.metrics import silhouette_samples
+silhouette=silhouette_samples(X_std,labels)
+
+import pandas
+df = pandas.DataFrame({'label':labels,'silhouette':silhouette})
+
+# Calculate Silhouette Score of Individual Clusters
+print('Average Silhouette Score for Cluster 1: ',numpy.average(df[df['label'] == 0].silhouette))
+print('Average Silhouette Score for Cluster 2: ',numpy.average(df[df['label'] == 1].silhouette))
+print('Average Silhouette Score for Cluster 3: ',numpy.average(df[df['label'] == 2].silhouette))
+print('Average Silhouette Score for Cluster 4: ',numpy.average(df[df['label'] == 3].silhouette))
+
+# Total Silhouette Score
+from sklearn.metrics import silhouette_score
+silhouette_score(X,labels)
